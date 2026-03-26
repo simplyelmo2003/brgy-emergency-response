@@ -120,3 +120,8 @@ Only add environment variables in:
 ## Next Action
 
 👉 **Start here:** Read [SUPABASE_SETUP.md](SUPABASE_SETUP.md)
+
+
+
+
+
