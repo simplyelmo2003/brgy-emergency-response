@@ -7,6 +7,7 @@ const prismaClient_1 = __importDefault(require("./prismaClient"));
 async function main() {
     console.log('Starting database seed...');
     // Clear existing data
+    await prismaClient_1.default.user.deleteMany({});
     await prismaClient_1.default.incidentReport.deleteMany({});
     await prismaClient_1.default.evacCenter.deleteMany({});
     await prismaClient_1.default.barangay.deleteMany({});
@@ -70,6 +71,37 @@ async function main() {
     // Create all barangays
     const barangays = await Promise.all(barangaysData.map(b => prismaClient_1.default.barangay.create({ data: b })));
     console.log(`✅ Seeded ${barangays.length} barangays`);
+    // Create default users
+    const adminUser = await prismaClient_1.default.user.create({
+        data: {
+            username: 'admin@example.com',
+            email: 'admin@example.com',
+            password: 'password123',
+            role: 'admin',
+            barangayId: null,
+        },
+    });
+    console.log('✅ Created admin user:', adminUser.username);
+    const barangayUser = await prismaClient_1.default.user.create({
+        data: {
+            username: 'barangay@example.com',
+            email: 'barangay@example.com',
+            password: 'password123',
+            role: 'barangay',
+            barangayId: 'brgy-serna',
+        },
+    });
+    console.log('✅ Created barangay user:', barangayUser.username, 'assigned to brgy-serna');
+    const guestUser = await prismaClient_1.default.user.create({
+        data: {
+            username: 'guest@example.com',
+            email: 'guest@example.com',
+            password: 'password123',
+            role: 'guest',
+            barangayId: null,
+        },
+    });
+    console.log('✅ Created guest user:', guestUser.username);
     console.log('✅ Database seeded successfully!');
 }
 main()

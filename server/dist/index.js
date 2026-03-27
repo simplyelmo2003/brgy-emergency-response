@@ -35,6 +35,14 @@ const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 app.use(express_1.default.json({ limit: '50mb' }));
 app.use(express_1.default.urlencoded({ limit: '50mb', extended: true }));
+// Global error handler for uncaught exceptions in async handlers
+process.on('uncaughtException', (err) => {
+    console.error('❌ UNCAUGHT EXCEPTION:', err.message);
+    console.error(err.stack);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ UNHANDLED REJECTION:', reason);
+});
 // Request logging middleware for debugging incoming requests
 app.use((req, res, next) => {
     try {
@@ -92,7 +100,7 @@ app.get('/api/incident-reports/debug/latest', async (_req, res) => {
 app.post('/api/incident-reports', async (req, res) => {
     try {
         console.log('📥 POST /api/incident-reports received:', JSON.stringify(req.body));
-        const { reporterName, reporterContact, type, description, locationDescription, latitude, longitude, barangayId } = req.body;
+        const { reporterName, reporterContact, type, description, locationDescription, latitude, longitude, barangayId, imageUrls } = req.body;
         console.log('🔍 Extracted fields:', {
             reporterName,
             reporterContact,
@@ -101,7 +109,7 @@ app.post('/api/incident-reports', async (req, res) => {
             locationDescription,
             latitude,
             longitude,
-            // imageUrls removed
+            imageUrls,
             barangayId
         });
         // Validate required fields
@@ -118,7 +126,7 @@ app.post('/api/incident-reports', async (req, res) => {
                 locationDescription: locationDescription || null,
                 latitude: latitude ? Number(latitude) : null,
                 longitude: longitude ? Number(longitude) : null,
-                // imageUrls removed
+                imageUrls: imageUrls || null,
                 status: 'Pending',
                 barangayId: barangayId || null,
             }
@@ -135,7 +143,7 @@ app.post('/api/incident-reports', async (req, res) => {
 app.put('/api/incident-reports/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, adminNotes, description, type, locationDescription } = req.body;
+        const { status, adminNotes, description, type, locationDescription, imageUrls } = req.body;
         console.log('📥 PUT /api/incident-reports/:id received:', { id, status, adminNotes });
         const updated = await prismaClient_1.default.incidentReport.update({
             where: { id },
@@ -145,6 +153,7 @@ app.put('/api/incident-reports/:id', async (req, res) => {
                 description: description || undefined,
                 type: type || undefined,
                 locationDescription: locationDescription || undefined,
+                imageUrls: imageUrls !== undefined ? imageUrls : undefined,
                 updatedAt: new Date(),
             }
         });
@@ -186,8 +195,22 @@ app.get('/api/messages', async (_req, res) => {
 });
 app.post('/api/messages', async (req, res) => {
     try {
-        const { conversationId, sender, body } = req.body;
-        const created = await prismaClient_1.default.message.create({ data: { conversationId, sender, body } });
+        const { conversationId, sender, body, senderName, senderRole, senderBarangayId, subject, type, isRead, recipientRole, recipientBarangayId } = req.body;
+        const created = await prismaClient_1.default.message.create({
+            data: {
+                conversationId,
+                sender,
+                body,
+                senderName: senderName || 'System',
+                senderRole: senderRole || 'admin',
+                barangayId: senderBarangayId,
+                subject: subject || '',
+                type: type || 'general',
+                isRead: isRead || false,
+                recipientRole: recipientRole || 'all',
+                recipientBarangayId,
+            }
+        });
         res.status(201).json(created);
     }
     catch (e) {
@@ -290,6 +313,20 @@ app.post('/api/alerts', async (req, res) => {
         res.status(500).json({ error: String(e) });
     }
 });
+app.delete('/api/alerts/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prismaClient_1.default.alert.delete({ where: { id } });
+        res.status(204).send();
+    }
+    catch (e) {
+        console.error('DELETE /api/alerts/:id error:', e);
+        if (e.code === 'P2025') {
+            return res.status(404).json({ error: 'Alert not found' });
+        }
+        res.status(500).json({ error: String(e) });
+    }
+});
 // News
 app.get('/api/news', async (_req, res) => {
     try {
@@ -309,6 +346,7 @@ app.post('/api/news', async (req, res) => {
     try {
         console.log('📝 POST /api/news received:', JSON.stringify(req.body, null, 2));
         const { title, content, category, mediaType, mediaUrl, thumbnailUrl, author, source } = req.body;
+        console.log('📋 Category received:', category, 'Type:', typeof category, 'IsArray:', Array.isArray(category));
         // Validation
         if (!title || !content) {
             console.error('POST /api/news validation error: missing title or content', { title, content });
@@ -326,7 +364,7 @@ app.post('/api/news', async (req, res) => {
                 source
             }
         });
-        console.log('✅ News item created:', created.id);
+        console.log('✅ News item created:', created.id, 'with category:', created.category);
         res.status(201).json(created);
     }
     catch (e) {
@@ -391,6 +429,52 @@ app.post('/admin/news', async (req, res) => {
         res.status(500).json({ error: String(e) });
     }
 });
+app.delete('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        console.log('📥 DELETE /api/news/:id received:', id);
+        const deleted = await prismaClient_1.default.news.delete({ where: { id } });
+        console.log('🗑️ News item deleted:', deleted.id);
+        res.json({ success: true, id: deleted.id });
+    }
+    catch (e) {
+        console.error('❌ DELETE /api/news/:id error:', e);
+        if (e.code === 'P2025') {
+            return res.status(404).json({ error: 'News item not found' });
+        }
+        res.status(500).json({ error: 'Failed to delete news item', details: String(e) });
+    }
+});
+app.put('/api/news/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        console.log('📝 PUT /api/news/:id received:', id, JSON.stringify(req.body, null, 2));
+        const { title, content, category, mediaType, mediaUrl, thumbnailUrl, author, source } = req.body;
+        console.log('📋 Category received for update:', category, 'Type:', typeof category, 'IsArray:', Array.isArray(category));
+        const updated = await prismaClient_1.default.news.update({
+            where: { id },
+            data: {
+                title,
+                content,
+                category: Array.isArray(category) ? JSON.stringify(category) : category,
+                mediaType,
+                mediaUrl,
+                thumbnailUrl,
+                author,
+                source,
+            }
+        });
+        console.log('✅ News item updated:', updated.id, 'with category:', updated.category);
+        res.json(updated);
+    }
+    catch (e) {
+        console.error('❌ PUT /api/news/:id error:', e);
+        if (e.code === 'P2025') {
+            return res.status(404).json({ error: 'News item not found' });
+        }
+        res.status(500).json({ error: 'Failed to update news item', details: String(e) });
+    }
+});
 // Contacts
 app.get('/api/contacts', async (_req, res) => {
     try {
@@ -443,6 +527,57 @@ app.delete('/api/contacts/:id', async (req, res) => {
         res.status(500).json({ error: String(e) });
     }
 });
+// Authentication - Login endpoint (accepts both username and email)
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        console.log('🔐 POST /api/auth/login - incoming request body:', { username, password });
+        if (!username || !password) {
+            console.log('❌ Missing username or password');
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+        // Try to find user by username first
+        console.log('🔍 Looking up user by username:', username);
+        let user = await prismaClient_1.default.user.findUnique({ where: { username } }).catch(() => null);
+        // If not found and input looks like email, try email lookup
+        if (!user && username.includes('@')) {
+            console.log('🔍 Username lookup failed, trying email lookup for:', username);
+            user = await prismaClient_1.default.user.findFirst({ where: { email: username } }).catch(() => null);
+            // If still not found, try extracting the part before @ and use that as username
+            if (!user) {
+                const usernamePart = username.split('@')[0];
+                console.log('🔍 Email lookup failed, trying username from email part:', usernamePart);
+                user = await prismaClient_1.default.user.findUnique({ where: { username: usernamePart } }).catch(() => null);
+            }
+        }
+        if (!user) {
+            console.log('❌ User not found with username or email:', username);
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+        console.log('✅ User found:', { id: user.id, username: user.username, email: user.email });
+        console.log('🔐 Comparing passwords...');
+        // Simple password check (in production, use bcrypt or similar)
+        if (user.password !== password) {
+            console.log('❌ Invalid password for user:', user.username);
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+        console.log('✅ Login successful for user:', user.username, 'role:', user.role, 'barangayId:', user.barangayId);
+        // Return user data with barangayId and email (use username as fallback for email if null)
+        res.json({
+            id: user.id,
+            username: user.username,
+            email: user.email || user.username,
+            role: user.role,
+            barangayId: user.barangayId,
+            token: 'token-' + user.id, // Generate a simple token
+            createdAt: user.createdAt,
+        });
+    }
+    catch (e) {
+        console.error('❌ POST /api/auth/login error:', e);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
 // Users (basic list/create for admin tooling)
 app.get('/api/users', async (_req, res) => {
     try {
@@ -456,12 +591,188 @@ app.get('/api/users', async (_req, res) => {
 });
 app.post('/api/users', async (req, res) => {
     try {
-        const { username, password, role, barangayId } = req.body;
-        const created = await prismaClient_1.default.user.create({ data: { username, password, role, barangayId } });
+        const { username, email, password, role, barangayId } = req.body;
+        console.log('📝 POST /api/users - incoming request body:', JSON.stringify(req.body, null, 2));
+        console.log('📝 Extracted fields:', { username, email, password, role, barangayId });
+        console.log('📝 Email type:', typeof email, 'Email value:', email, 'Email truthy?', !!email);
+        // Validate required fields
+        if (!username || !password) {
+            console.warn('⚠️ Missing required fields');
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+        try {
+            const created = await prismaClient_1.default.user.create({
+                data: {
+                    username,
+                    email: email || null,
+                    password,
+                    role,
+                    barangayId: barangayId || null
+                }
+            });
+            console.log('✅ User created:', created.id, created.username, 'email:', created.email);
+            res.status(201).json(created);
+        }
+        catch (dbError) {
+            console.error('❌ Database error in POST /api/users:', dbError.message, dbError.code);
+            throw dbError;
+        }
+    }
+    catch (e) {
+        console.error('❌ POST /api/users error:', e.message || String(e));
+        res.status(500).json({ error: String(e.message || e) });
+    }
+});
+// Update user (PUT)
+app.put('/api/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, email, role, barangayId, isActive } = req.body;
+        console.log('📝 PUT /api/users/:id - updating user:', id, 'role:', role, 'barangayId:', barangayId, 'email:', email);
+        const updated = await prismaClient_1.default.user.update({
+            where: { id },
+            data: {
+                ...(username && { username }),
+                ...(email !== undefined && { email: email || null }),
+                ...(role && { role }),
+                ...(barangayId !== undefined && { barangayId }),
+            },
+        });
+        console.log('✅ User updated:', updated.id, updated.username);
+        res.json(updated);
+    }
+    catch (e) {
+        console.error('❌ PUT /api/users/:id error:', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+// Delete user (DELETE)
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        console.log('🗑️ DELETE /api/users/:id - deleting user:', id);
+        const deleted = await prismaClient_1.default.user.delete({ where: { id } });
+        console.log('✅ User deleted:', deleted.id);
+        res.json({ message: 'User deleted successfully', id });
+    }
+    catch (e) {
+        console.error('❌ DELETE /api/users/:id error:', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+// Barangay Affected People Management
+app.get('/api/barangay/affected-people', async (req, res) => {
+    try {
+        const { barangayId } = req.query;
+        if (!barangayId) {
+            return res.status(400).json({ error: 'barangayId is required' });
+        }
+        const people = await prismaClient_1.default.affectedPerson.findMany({
+            where: { barangayId: barangayId },
+            include: { barangay: true },
+            orderBy: { createdAt: 'desc' }
+        });
+        console.log(`👥 GET /api/barangay/affected-people: found ${people.length} affected people for barangay ${barangayId}`);
+        res.json(people);
+    }
+    catch (e) {
+        console.error('GET /api/barangay/affected-people error:', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+app.post('/api/barangay/affected-people', async (req, res) => {
+    try {
+        const { name, sex, age, purok, birthday, affected, evacuated, barangayId } = req.body;
+        if (!name || !barangayId) {
+            return res.status(400).json({ error: 'Name and barangayId are required' });
+        }
+        // For now, we'll create a dummy incident report or use an existing one
+        // This is a temporary solution until we modify the schema
+        let incidentReportId;
+        const existingReport = await prismaClient_1.default.incidentReport.findFirst({
+            where: { barangayId: barangayId }
+        });
+        if (existingReport) {
+            incidentReportId = existingReport.id;
+        }
+        else {
+            // Create a dummy incident report for this barangay
+            const dummyReport = await prismaClient_1.default.incidentReport.create({
+                data: {
+                    reporterName: 'Barangay Official',
+                    type: 'Barangay Management',
+                    description: 'System-generated report for barangay affected people management',
+                    locationDescription: barangayId,
+                    barangayId: barangayId,
+                    status: 'active'
+                }
+            });
+            incidentReportId = dummyReport.id;
+        }
+        const created = await prismaClient_1.default.affectedPerson.create({
+            data: {
+                name,
+                sex: sex || null,
+                age: age ? parseInt(age) : null,
+                purok: purok || null,
+                birthday: birthday ? new Date(birthday) : null,
+                affected: affected || false,
+                evacuated: evacuated || false,
+                barangayId: barangayId,
+                incidentReportId
+            },
+            include: { barangay: true }
+        });
+        console.log(`✅ POST /api/barangay/affected-people: created affected person ${created.id}`);
         res.status(201).json(created);
     }
     catch (e) {
-        console.error('POST /api/users error:', e);
+        console.error('POST /api/barangay/affected-people error:', e);
+        res.status(500).json({ error: String(e) });
+    }
+});
+app.put('/api/barangay/affected-people/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, sex, age, purok, birthday, affected, evacuated } = req.body;
+        const updated = await prismaClient_1.default.affectedPerson.update({
+            where: { id },
+            data: {
+                name: name || undefined,
+                sex: sex || undefined,
+                age: age ? parseInt(age) : undefined,
+                purok: purok || undefined,
+                birthday: birthday ? new Date(birthday) : undefined,
+                affected: affected !== undefined ? affected : undefined,
+                evacuated: evacuated !== undefined ? evacuated : undefined
+            },
+            include: { barangay: true }
+        });
+        console.log(`✅ PUT /api/barangay/affected-people/${id}: updated affected person`);
+        res.json(updated);
+    }
+    catch (e) {
+        console.error(`PUT /api/barangay/affected-people/${req.params.id} error:`, e);
+        if (e.code === 'P2025') {
+            return res.status(404).json({ error: 'Affected person not found' });
+        }
+        res.status(500).json({ error: String(e) });
+    }
+});
+app.delete('/api/barangay/affected-people/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const deleted = await prismaClient_1.default.affectedPerson.delete({
+            where: { id }
+        });
+        console.log(`🗑️ DELETE /api/barangay/affected-people/${id}: deleted affected person`);
+        res.json({ success: true, id: deleted.id });
+    }
+    catch (e) {
+        console.error(`DELETE /api/barangay/affected-people/${req.params.id} error:`, e);
+        if (e.code === 'P2025') {
+            return res.status(404).json({ error: 'Affected person not found' });
+        }
         res.status(500).json({ error: String(e) });
     }
 });

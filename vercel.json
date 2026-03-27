@@ -1,8 +1,8 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": "vite",
-  "env": {
+  "framework": "vite",  "cleanUrls": true,
+  "trailingSlash": false,  "env": {
     "VITE_API_URL": "@vite_api_url"
   },
   "rewrites": [
