@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import prisma, { ensureConnection } from './prismaClient';
@@ -21,7 +21,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // Request logging middleware for debugging incoming requests
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   try {
     const safeBody = (() => {
       try { return JSON.stringify(req.body); } catch { return '[unserializable]'; }
@@ -728,7 +728,7 @@ app.post('/api/barangay/affected-people', async (req, res) => {
   }
 });
 
-app.put('/api/barangay/affected-people/:id', async (req, res) => {
+app.put('/api/barangay/affected-people/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { name, sex, age, purok, birthday, affected, evacuated } = req.body;
@@ -758,7 +758,7 @@ app.put('/api/barangay/affected-people/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/barangay/affected-people/:id', async (req, res) => {
+app.delete('/api/barangay/affected-people/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const deleted = await prisma.affectedPerson.delete({
@@ -777,7 +777,7 @@ app.delete('/api/barangay/affected-people/:id', async (req, res) => {
 });
 
 // Logs
-app.get('/api/logs', async (_req, res) => {
+app.get('/api/logs', async (_req: Request, res: Response) => {
   try {
     const logs = await prisma.logEntry.findMany({ orderBy: { createdAt: 'desc' } });
     res.json(logs);
@@ -787,7 +787,7 @@ app.get('/api/logs', async (_req, res) => {
   }
 });
 
-app.post('/api/logs', async (req, res) => {
+app.post('/api/logs', async (req: Request, res: Response) => {
   try {
     // Accept flexible log payloads from frontend: prefer explicit `message`, then `purpose`, then `details.message`/`details.title`
     const { level = 'info', message: rawMessage, meta, purpose, details } = req.body;
